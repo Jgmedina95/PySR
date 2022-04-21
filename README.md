@@ -14,7 +14,7 @@ PySR is built on an extremely optimized pure-Julia backend, and uses regularized
 (pronounced like *py* as in python, and then *sur* as in surface)
 
 If you find PySR useful, please cite it using the citation information given in [CITATION.md](https://github.com/MilesCranmer/PySR/blob/master/CITATION.md).
-If you've finished a project with PySR, please let me know and I may showcase your work here!
+If you've finished a project with PySR, please submit a PR to showcase your work on the [Research Showcase page](https://astroautomata.com/PySR/#/papers)!
 
 
 ### Test status:
@@ -135,8 +135,8 @@ This arrow in the `pick` column indicates which equation is currently selected b
 
 `model.equations` is a pandas DataFrame containing all equations, including callable format 
 (`lambda_format`),
-SymPy format (`sympy_format`), and even JAX and PyTorch format 
-(both of which are differentiable).
+SymPy format (`sympy_format` - which you can also get with `model.sympy()`), and even JAX and PyTorch format 
+(both of which are differentiable - which you can get with `model.jax()` and `model.pytorch()`).
 
 Note that `PySRRegressor` stores the state of the last search, and will restart from where you left off the next time you call `.fit()`. This will cause problems if significant changes are made to the search parameters (like changing the operators). You can run `model.reset()` to reset the state.
 
