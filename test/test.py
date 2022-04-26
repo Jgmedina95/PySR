@@ -44,8 +44,8 @@ class TestPipeline(unittest.TestCase):
     def test_multioutput_custom_operator_quiet(self):
         y = self.X[:, [0, 1]] ** 2
         model = PySRRegressor(
-            unary_operators=["sq(x) = x^2"],
-            extra_sympy_mappings={"sq": lambda x: x**2},
+            unary_operators=["square_op(x) = x^2"],
+            extra_sympy_mappings={"square_op": lambda x: x**2},
             binary_operators=["plus"],
             verbosity=0,
             **self.default_test_kwargs,
@@ -54,8 +54,22 @@ class TestPipeline(unittest.TestCase):
         model.fit(self.X, y)
         equations = model.equations
         print(equations)
+        self.assertIn("square_op", model.equations[0].iloc[-1]["equation"])
         self.assertLessEqual(equations[0].iloc[-1]["loss"], 1e-4)
         self.assertLessEqual(equations[1].iloc[-1]["loss"], 1e-4)
+
+        test_y1 = model.predict(self.X)
+        test_y2 = model.predict(self.X, index=[-1, -1])
+
+        mse1 = np.average((test_y1 - y) ** 2)
+        mse2 = np.average((test_y2 - y) ** 2)
+
+        self.assertLessEqual(mse1, 1e-4)
+        self.assertLessEqual(mse2, 1e-4)
+
+        bad_y = model.predict(self.X, index=[0, 0])
+        bad_mse = np.average((bad_y - y) ** 2)
+        self.assertGreater(bad_mse, 1e-4)
 
     def test_multioutput_weighted_with_callable_temp_equation(self):
         y = self.X[:, [0, 1]] ** 2
@@ -144,6 +158,8 @@ class TestPipeline(unittest.TestCase):
         y = true_fn(X)
         noise = np.random.randn(500) * 0.01
         y = y + noise
+        # We also test y as a pandas array:
+        y = pd.Series(y)
         # Resampled array is a different order of features:
         Xresampled = pd.DataFrame(
             {
@@ -205,6 +221,12 @@ class TestBest(unittest.TestCase):
 
     def test_best(self):
         self.assertEqual(self.model.sympy(), sympy.cos(sympy.Symbol("x0")) ** 2)
+
+    def test_index_selection(self):
+        self.assertEqual(self.model.sympy(-1), sympy.cos(sympy.Symbol("x0")) ** 2)
+        self.assertEqual(self.model.sympy(2), sympy.cos(sympy.Symbol("x0")) ** 2)
+        self.assertEqual(self.model.sympy(1), sympy.cos(sympy.Symbol("x0")))
+        self.assertEqual(self.model.sympy(0), 1.0)
 
     def test_best_tex(self):
         self.assertEqual(self.model.latex(), "\\cos^{2}{\\left(x_{0} \\right)}")

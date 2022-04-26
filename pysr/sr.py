@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import sympy
 from sympy import sympify, lambdify
-import subprocess
+import re
 import tempfile
 import shutil
 from pathlib import Path
@@ -155,12 +155,16 @@ def _create_inline_operators(binary_operators, unary_operators):
             if is_user_defined_operator:
                 Main.eval(op)
                 # Cut off from the first non-alphanumeric char:
-                first_non_char = [
-                    j
-                    for j, char in enumerate(op)
-                    if not (char.isalpha() or char.isdigit())
-                ][0]
+                first_non_char = [j for j, char in enumerate(op) if char == "("][0]
                 function_name = op[:first_non_char]
+                # Assert that function_name only contains
+                # alphabetical characters, numbers,
+                # and underscores:
+                if not re.match(r"^[a-zA-Z0-9_]+$", function_name):
+                    raise ValueError(
+                        f"Invalid function name {function_name}. "
+                        "Only alphanumeric characters, numbers, and underscores are allowed."
+                    )
                 op_list[i] = function_name
 
 
@@ -271,12 +275,15 @@ class CallableEquation:
         return f"PySRFunction(X=>{self._sympy})"
 
     def __call__(self, X):
+        expected_shape = (X.shape[0],)
         if isinstance(X, pd.DataFrame):
             # Lambda function takes as argument:
-            return self._lambda(**{k: X[k].values for k in X.columns})
+            return self._lambda(**{k: X[k].values for k in X.columns}) * np.ones(
+                expected_shape
+            )
         elif self._selection is not None:
-            return self._lambda(*X[:, self._selection].T)
-        return self._lambda(*X.T)
+            return self._lambda(*X[:, self._selection].T) * np.ones(expected_shape)
+        return self._lambda(*X.T) * np.ones(expected_shape)
 
 
 def _get_julia_project(julia_project):
@@ -785,10 +792,25 @@ class PySRRegressor(BaseEstimator, RegressorMixin):
             **{key: self.__getattribute__(key) for key in self.surface_parameters},
         }
 
-    def get_best(self):
-        """Get best equation using `model_selection`."""
+    def get_best(self, index=None):
+        """Get best equation using `model_selection`.
+
+        :param index: Optional. If you wish to select a particular equation
+            from `self.equations`, give the row number here. This overrides
+            the `model_selection` parameter.
+        :type index: int
+        :returns: Dictionary representing the best expression found.
+        :type: pd.Series
+        """
         if self.equations is None:
             raise ValueError("No equations have been generated yet.")
+
+        if index is not None:
+            if isinstance(self.equations, list):
+                assert isinstance(index, list)
+                return [eq.iloc[i] for eq, i in zip(self.equations, index)]
+            return self.equations.iloc[index]
+
         if self.model_selection == "accuracy":
             if isinstance(self.equations, list):
                 return [eq.iloc[-1] for eq in self.equations]
@@ -832,7 +854,7 @@ class PySRRegressor(BaseEstimator, RegressorMixin):
         # such as extra_sympy_mappings.
         self.equations = self.get_hof()
 
-    def predict(self, X):
+    def predict(self, X, index=None):
         """Predict y from input X using the equation chosen by `model_selection`.
 
         You may see what equation is used by printing this object. X should have the same
@@ -840,36 +862,64 @@ class PySRRegressor(BaseEstimator, RegressorMixin):
 
         :param X: 2D array. Rows are examples, columns are features. If pandas DataFrame, the columns are used for variable names (so make sure they don't contain spaces).
         :type X: np.ndarray/pandas.DataFrame
-        :return: 1D array (rows are examples) or 2D array (rows are examples, columns are outputs).
+        :param index: Optional. If you want to compute the output of
+            an expression using a particular row of
+            `self.equations`, you may specify the index here.
+        :type index: int
+        :returns: 1D array (rows are examples) or 2D array (rows are examples, columns are outputs).
+        :type: np.ndarray
         """
         self.refresh()
-        best = self.get_best()
+        best = self.get_best(index=index)
         if self.multioutput:
             return np.stack([eq["lambda_format"](X) for eq in best], axis=1)
         return best["lambda_format"](X)
 
-    def sympy(self):
-        """Return sympy representation of the equation(s) chosen by `model_selection`."""
+    def sympy(self, index=None):
+        """Return sympy representation of the equation(s) chosen by `model_selection`.
+
+        :param index: Optional. If you wish to select a particular equation
+            from `self.equations`, give the index number here. This overrides
+            the `model_selection` parameter.
+        :type index: int
+        :returns: SymPy representation of the best expression.
+        """
         self.refresh()
-        best = self.get_best()
+        best = self.get_best(index=index)
         if self.multioutput:
             return [eq["sympy_format"] for eq in best]
         return best["sympy_format"]
 
-    def latex(self):
-        """Return latex representation of the equation(s) chosen by `model_selection`."""
+    def latex(self, index=None):
+        """Return latex representation of the equation(s) chosen by `model_selection`.
+
+        :param index: Optional. If you wish to select a particular equation
+            from `self.equations`, give the index number here. This overrides
+            the `model_selection` parameter.
+        :type index: int
+        :returns: LaTeX expression as a string
+        :type: str
+        """
         self.refresh()
-        sympy_representation = self.sympy()
+        sympy_representation = self.sympy(index=index)
         if self.multioutput:
             return [sympy.latex(s) for s in sympy_representation]
         return sympy.latex(sympy_representation)
 
-    def jax(self):
+    def jax(self, index=None):
         """Return jax representation of the equation(s) chosen by `model_selection`.
 
         Each equation (multiple given if there are multiple outputs) is a dictionary
         containing {"callable": func, "parameters": params}. To call `func`, pass
         func(X, params). This function is differentiable using `jax.grad`.
+
+        :param index: Optional. If you wish to select a particular equation
+            from `self.equations`, give the index number here. This overrides
+            the `model_selection` parameter.
+        :type index: int
+        :returns: Dictionary of callable jax function in "callable" key,
+            and jax array of parameters as "parameters" key.
+        :type: dict
         """
         if self.using_pandas:
             warnings.warn(
@@ -879,18 +929,26 @@ class PySRRegressor(BaseEstimator, RegressorMixin):
             )
         self.set_params(output_jax_format=True)
         self.refresh()
-        best = self.get_best()
+        best = self.get_best(index=index)
         if self.multioutput:
             return [eq["jax_format"] for eq in best]
         return best["jax_format"]
 
-    def pytorch(self):
+    def pytorch(self, index=None):
         """Return pytorch representation of the equation(s) chosen by `model_selection`.
 
         Each equation (multiple given if there are multiple outputs) is a PyTorch module
         containing the parameters as trainable attributes. You can use the module like
         any other PyTorch module: `module(X)`, where `X` is a tensor with the same
         column ordering as trained with.
+
+
+        :param index: Optional. If you wish to select a particular equation
+            from `self.equations`, give the row number here. This overrides
+            the `model_selection` parameter.
+        :type index: int
+        :returns: PyTorch module representing the expression.
+        :type: torch.nn.Module
         """
         if self.using_pandas:
             warnings.warn(
@@ -900,7 +958,7 @@ class PySRRegressor(BaseEstimator, RegressorMixin):
             )
         self.set_params(output_torch_format=True)
         self.refresh()
-        best = self.get_best()
+        best = self.get_best(index=index)
         if self.multioutput:
             return [eq["torch_format"] for eq in best]
         return best["torch_format"]
@@ -963,7 +1021,8 @@ class PySRRegressor(BaseEstimator, RegressorMixin):
         if len(X.shape) == 1:
             X = X[:, None]
 
-        assert not isinstance(y, pd.DataFrame)
+        if isinstance(y, pd.DataFrame) or isinstance(y, pd.Series):
+            y = np.array(y)
 
         if variable_names is None or len(variable_names) == 0:
             variable_names = [f"x{i}" for i in range(X.shape[1])]
