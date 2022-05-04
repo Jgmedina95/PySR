@@ -351,7 +351,7 @@ To silence this warning, you can run pysr.silence_julia_warning() after importin
 def _add_sr_to_julia_project(Main, io_arg):
     Main.spec = Main.PackageSpec(
         name="SymbolicRegression",
-        url="https://github.com/MilesCranmer/SymbolicRegression.jl",
+        url="https://github.com/Jgmedina95/SymbolicRegression.jl.gitl",
         rev="v" + __symbolic_regression_jl_version__,
     )
     Main.eval(f"Pkg.add(spec, {io_arg})")
