@@ -1422,3 +1422,4 @@ class PySRRegressor(BaseEstimator, RegressorMixin):
         del X
         del y
         raise NotImplementedError
+#making 1 change
